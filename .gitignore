@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Project Specific Data & Artifacts
+*.mat
+*.npz
+*.ipynb
+data/
+.vscode/
+downloads/
+
+# Distribution / Packaging
+build/
+dist/
+*.egg-info/
