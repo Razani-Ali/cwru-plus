@@ -8,6 +8,7 @@ Markdown
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ZLASr6GLbxxAsH-HcIwX3KAJgr5BdZb3?usp=sharing)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![PyPI version](https://badge.fury.io/py/cwru-plus.svg)](https://badge.fury.io/py/cwru-plus)
 
 </div>
 
@@ -49,13 +50,18 @@ print(f"Data Shape: {X.shape} | Labels Shape: {Y.shape}")
 
 ## ⚙️ Installation
 
-Clone the repository and install it in editable mode (which automatically installs dependencies like `numpy`, `scipy`, `requests`, and `tqdm`):
+You can install **CWRU-Plus** directly from PyPI via `pip` (which automatically manages all dependencies like `numpy`, `scipy`, `requests`, and `tqdm`):
+
+```bash
+pip install cwru-plus
+```
+🛠️ For Developers & Contributors
+If you want to modify the source code, clone the repository and install it in editable mode:
 
 ```bash
 git clone https://github.com/Razani-Ali/cwru-plus.git
 cd cwru-plus
 pip install -e .
-
 ```
 
 ---
