@@ -11,9 +11,6 @@ requires-python = ">=3.10"
 authors = [
     { name = "Ali Razani" }
 ]
-[project.urls]
-Homepage = "https://github.com/Razani-Ali/cwru-plus"
-"Bug Tracker" = "https://github.com/Razani-Ali/cwru-plus/issues"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -33,3 +30,7 @@ packages = ["cwru"]
 
 [tool.setuptools.package-data]
 "cwru" = ["*.py"]
+
+[project.urls]
+Homepage = "https://github.com/Razani-Ali/cwru-plus"
+"Bug Tracker" = "https://github.com/Razani-Ali/cwru-plus/issues"
