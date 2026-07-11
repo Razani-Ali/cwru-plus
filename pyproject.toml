@@ -26,9 +26,6 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["cwru"]
-
-[tool.setuptools]
 packages = ["cwru", "cwru.config"]
 
 [project.urls]
