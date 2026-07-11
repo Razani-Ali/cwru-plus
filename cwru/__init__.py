@@ -10,10 +10,11 @@ import sys
 import numpy as np
 from typing import Callable, Dict, Tuple, Union, List, Optional
 
-from .downloader import download_CWRU_files
+from .downloader import download_CWRU_files, local_download
 from .ingestion import CWRUIngestor
 from .filtering import DatasetFilter
 from .dataset import CWRUDatasetBuilder
+from .fewshot_sampler import FewShotSampler
 
 __version__ = "0.1.0"
 
@@ -57,6 +58,53 @@ class CWRUPipeline:
             CWRUfs=CWRUfs,
             replace_files=replace_files,
             max_workers=max_workers
+        )
+    
+    @staticmethod
+    def offline_download(
+        source_path: str,
+        target_path: str = 'data/CWRU/RawFiles',
+        CWRUfs: int = 12,
+        replace_files: bool = False
+    ) -> bool:
+        """
+        Exposes a clean, high-level API to import, parse, and standardize manually 
+        downloaded CWRU MATLAB (.mat) files from a local directory.
+
+        This function cross-references the files inside the `source_path` against 
+        the official structural grid URLs of the requested sampling frequency. It selectively 
+        isolates the correct files, maps them to a highly consistent, machine-learning-ready 
+        naming convention, and duplicates them into the `target_path`. 
+
+        To prevent data corruption or conflicts, your original source files are left 
+        completely unmodified. Files belonging to other sampling rates in the same directory 
+        are automatically ignored unless requested.
+
+        Args:
+            source_path (str): Absolute or relative path to the local directory where 
+                            the raw, manually downloaded `.mat` files (e.g., '105.mat') reside.
+            target_path (str): The destination directory where the newly renamed and 
+                            standardized files will be stored. Defaults to 'data/CWRU/RawFiles'.
+            CWRUfs (int): The target sampling frequency to filter and build (Must be either 12 or 48). 
+                        Defaults to 12.
+            replace_files (bool): If True, overwrites existing files in the destination directory. 
+                                If False, skips processing for already existing standardized files. 
+                                Defaults to False.
+
+        Returns:
+            bool: True if matching files were successfully identified, mapped, and copied to 
+                the target directory; False if no compatible source files were found.
+
+        Raises:
+            ValueError: If `CWRUfs` is passed an invalid integer other than 12 or 48.
+        """
+
+        # Simply delegate the args to the underlying local implementation
+        return local_download(
+            source_path=source_path,
+            target_path=target_path,
+            CWRUfs=CWRUfs,
+            replace_files=replace_files
         )
 
     @staticmethod
@@ -170,6 +218,49 @@ class CWRUPipeline:
             fault_category=fault_category,
             num_parts=num_parts
         )
+
+
+def build_few_shot_sampler(
+    X_base: np.ndarray,
+    Y_base: np.ndarray,
+    numeric_to_string: Dict[int, str],
+    meta_base: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = (None, None, None),
+    seed: Optional[int] = None
+): # -> FewShotSampler
+    """
+    Initializes and returns a high-performance FewShotSampler instance for pre-windowed datasets.
+    
+    This wrapper abstracts the instantiation process, allowing seamless integration into 
+    data loading pipelines. The returned sampler object can be queried repeatedly via 
+    its `.sample()` method to extract isolated episodic tasks for meta-learning.
+
+    Args:
+        X_base (np.ndarray): The pre-windowed 3D input tensor of shape [Total_Windows, Channels, Length].
+        Y_base (np.ndarray): Master 1D array of original string labels corresponding to each window.
+        numeric_to_string (Dict[int, str]): Dictionary mapping PyTorch-compatible integer classes 
+                                            to database string names (e.g., {0: 'Normal', 1: 'Inner_Fault'}).
+        meta_base (Tuple[np.ndarray, np.ndarray, np.ndarray], optional): 
+            Bound operational metadata arrays corresponding to each window instance.
+            Expected format: (Severity_Array, HP_Array, Location_Array). 
+            Defaults to (None, None, None).
+        seed (int, optional): Pseudo-random generator state for exact task reproducibility.
+
+    Returns:
+        FewShotSampler: An initialized sampler object ready for `.sample()` queries.
+    """
+    # Initialize the core sampler using the pre-processed 3D tensors
+    sampler = FewShotSampler(
+        X_base=X_base, 
+        Y_base=Y_base, 
+        numeric_to_string=numeric_to_string,
+        meta_base=meta_base
+    )
+    
+    # Lock the seed if provided for reproducible episodic generation
+    if seed is not None:
+        sampler.reset_seed(seed)
+        
+    return sampler
 
 # Bind the pipeline object directly to the module namespace for a seamless user experience
 sys.modules[__name__] = CWRUPipeline()

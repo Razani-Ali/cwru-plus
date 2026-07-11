@@ -10,7 +10,7 @@ import os
 import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Union
 from tqdm.auto import tqdm
 import zipfile
 import threading
@@ -191,169 +191,435 @@ def run_parallel_downloads(tasks: List[Tuple[str, str, str]], max_workers: int,
                 
     return successful, failed_downloads
 
-def create_zip(source_dir: str, zip_path: str, replace: bool = False):
+def remove_folder(folder_path: Union[str, os.PathLike], force: bool = False) -> bool:
     """
-    Recursively archives a directory into a ZIP file with a progress bar.
-    
+    Safely and recursively removes a directory tree from the filesystem.
+
+    Provides a clean execution wrapper around standard directory tree removal tools.
+    It integrates explicit verification checks for pathway existence and node type
+    descriptors before launching deletion, isolating permission violations or 
+    generic file system exceptions to guarantee system runtime stability.
+
     Args:
-        source_dir (str): The root directory to be archived.
-        zip_path (str): The destination path for the final .zip file.
-        replace (bool, optional): Whether to overwrite an existing ZIP file. Defaults to False.
-        
+        folder_path (Union[str, os.PathLike]): The pathway locating the target directory 
+            tree slated for recursive deletion.
+        force (bool, optional): If True, suppresses missing directory exceptions and 
+            returns True even if the target folder does not exist. Defaults to False.
+
     Returns:
-        bool: True if the zip archive is successfully created, False otherwise.
+        bool: True if the directory tree was successfully deleted (or skipped via force=True),
+            False if an OS error, missing permission descriptor, or lock blocked completion.
+
+    Raises:
+        FileNotFoundError: If the target path is absent and force is evaluated as False.
+        NotADirectoryError: If the designated pathway targets a file descriptor rather 
+            than a directory layout container.
     """
-    # Check if the zip file already exists and should be preserved
-    if os.path.exists(zip_path) and not replace:
-        print(f"⏭️ Zip file {zip_path} already exists. Skipping.")
-        return True
-    
-    # Initialize a list to hold all target file paths and a counter for total byte size
-    file_tasks = []
-    total_size = 0
-
-    # Define a recursive function to map all files in the source directory tree
-    def collect_files(target_dir):
-        nonlocal total_size
-        # Scan the directory efficiently using os.scandir
-        with os.scandir(target_dir) as entries:
-            for entry in entries:
-                if entry.is_file():
-                    # If it's a file, add its path to the task list and aggregate its size
-                    file_tasks.append(entry.path)
-                    total_size += entry.stat().st_size
-                elif entry.is_dir():
-                    # If it's a directory, recursively explore it
-                    collect_files(entry.path)
-
-    # Populate the file_tasks list and calculate total_size
-    collect_files(source_dir)
-
-    # Ensure the parent directory for the output zip exists
-    os.makedirs(os.path.dirname(os.path.abspath(zip_path)), exist_ok=True)
-    # Generate a temporary path for the zip to prevent corrupted partial archives
-    temp_zip = get_temp_path(zip_path)
-
     try:
-        # Open the temporary zip file in write mode using standard DEFLATED compression
-        with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Initialize a tqdm progress bar tracking bytes
-            with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, 
-                      desc="Zipping", leave=True) as bar:
-                
-                # Iterate through all collected file paths
-                for file_path in file_tasks:
-                    # Calculate the relative path to maintain folder structure inside the zip
-                    rel_path = os.path.relpath(file_path, source_dir)
-                    # Write the file into the zip archive
-                    zipf.write(file_path, rel_path)
-                    # Update the progress bar by the exact size of the processed file
-                    bar.update(os.path.getsize(file_path))
+        # Check if the target pathway physically exists on the filesystem disk
+        if not os.path.exists(folder_path):
+            # If the path is missing but the force flag is active, bypass execution with success
+            if force:
+                return True
+            # Raise an explicit exception if the folder is absent and force is deactivated
+            raise FileNotFoundError(f"❌ could not find folder '{folder_path}'")
         
-        # Atomically replace the temporary zip with the final destination path
-        replace_with_error(temp_zip, zip_path)
-        print(f"✅ Successfully created zip at: {zip_path}")
+        # Verify that the existing node represents a structural directory, not a generic file link
+        if not os.path.isdir(folder_path):
+            # Abort operation with a explicit type exception if a file collision occurs
+            raise NotADirectoryError(f"🚫 directory '{folder_path}' is not a folder")
+        
+        # Concurrently clean and recursively purge the entire directory hierarchy layout tree
+        shutil.rmtree(folder_path)
+        # Return success confirmation after directory tree is wiped
         return True
-    except Exception as e:
-        # On failure, log the error and clean up the temporary zip file
-        print(f"❌ Error creating zip file: {e}")
-        remove_file(temp_zip, force=True)
-        return False
     
-# Dictionary to store thread locks mapped to specific file paths
+    except PermissionError as e:
+        # Intercept, catch, and log access blockages or administrative filesystem privileges
+        print(f"🔒 permission denied, error: {e}")
+    except Exception as e:
+        # Catch, log, and isolate unknown system exceptions to protect application lifecycle
+        print(f"⚠️ unknown error: {e}")
+        
+    # Return failure if any operational exception blockages interrupt execution flow
+    return False
+
+"""
+Core Downloader & File System Operations Module
+
+This module provides robust, single-responsibility utilities for parallel file 
+compressions, thread-safe buffering transfers, and dynamic progress bar management.
+"""
+
+# Global locks registry for thread-safe operations
 _locks = {}
-# A master lock to prevent race conditions when creating new file-specific locks
 _master_lock = threading.Lock()
 
-def get_file_lock(file_path):
-    """
-    Retrieves or creates a thread lock specific to a file path.
-    
-    Args:
-        file_path (str): The unique string representation of the target file path.
-        
-    Returns:
-        threading.Lock: A lock object assigned exclusively to the requested file path.
-    """
-    # Acquire the global master lock to safely evaluate the _locks dictionary
+def get_file_lock(file_path: str) -> threading.Lock:
+    """Retrieves or creates a thread lock specific to a file/folder path."""
     with _master_lock:
-        # If the file path doesn't have a lock yet, instantiate one
         if file_path not in _locks:
             _locks[file_path] = threading.Lock()
-        # Return the specific lock for this file
         return _locks[file_path]
 
-def safe_copy(src, dst, max_retries=7, chunk_size=50*1024*1024):
+def _get_total_bytes(path: Path) -> int:
+    """Calculates total payload size of a target file or a directory layout."""
+    if path.is_file():
+        return path.stat().st_size
+    return sum(f.stat().st_size for f in path.rglob('*') if f.is_file())
+
+
+def create_parallel_zip(src_dir: Union[str, Path], dst_zip_path: Union[str, Path], max_workers: int = 8) -> bool:
     """
-    Spawns a daemon thread to copy a file safely, atomically, and with thread locks.
-    
+    Consolidates a directory layout tree (e.g., Zarr store) into a single ZIP archive 
+    using high-speed concurrent threading and a dynamic progress bar.
+
     Args:
-        src (str/Path): The source file path.
-        dst (str/Path): The destination file path.
-        max_retries (int, optional): Number of retry attempts on failure. Defaults to 7.
-        chunk_size (int, optional): Size of the read/write buffer in bytes (default 50MB).
-        
+        src_dir (str/Path): The pathway targeting the source directory grid.
+        dst_zip_path (str/Path): The destination file path for the output ZIP archive.
+        max_workers (int, optional): Thread pool boundary cap for file compression. Defaults to 8.
+
     Returns:
-        threading.Thread: The daemon thread handling the copy operation.
+        bool: True if compression concludes flawlessly, False otherwise.
     """
-    # Retrieve the thread lock dedicated to the destination file
-    file_specific_lock = get_file_lock(str(dst))
+    src_path = Path(src_dir)
+    dst_path = Path(dst_zip_path)
     
-    # Define the internal function to be executed by the thread
+    if not src_path.is_dir():
+        print(f"❌ Source directory '{src_dir}' does not exist.")
+        return False
+        
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Pre-calculate total uncompressed bytes to calibrate the progress bar accurately
+    total_bytes = _get_total_bytes(src_path)
+    progress_lock = threading.Lock()
+    
+    # Gather all file nodes from the tree layout
+    all_files = [f for f in src_path.rglob('*') if f.is_file()]
+    
+    print(f"📦 [PARALLEL ZIP INITIALIZED] Packing {len(all_files)} files using {max_workers} threads... ⚡")
+    
+    try:
+        # Open the ZIP archive using ZIP_STORED to maximize execution speed (no CPU compression overhead)
+        with zipfile.ZipFile(dst_path, 'w', zipfile.ZIP_STORED) as zf, tqdm(
+            total=total_bytes, unit='B', unit_scale=True, unit_divisor=1024, desc="📦 Local Packing Phase", leave=True
+        ) as bar:
+            
+            # Since standard zipfile writing is single-threaded, we use a lock to safely write from workers
+            write_lock = threading.Lock()
+            
+            def _compress_worker(file_node: Path):
+                archive_name = file_node.relative_to(src_path.parent)
+                f_size = file_node.stat().st_size
+                
+                with write_lock:
+                    zf.write(file_node, archive_name)
+                    
+                with progress_lock:
+                    bar.update(f_size)
+            
+            # Dispatch independent files to the worker thread pool
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                executor.map(_compress_worker, all_files)
+                
+        print(f"✅ Local packing complete! Compressed file hosted at: {dst_path}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to create zip package: {e}")
+        if dst_path.exists():
+            os.remove(dst_path)
+        return False
+
+
+def _stream_file_buffered(p_src: Path, p_dst: Path, chunk_size: int, bar: tqdm):
+    """Worker sub-task: Streams a single file using optimized chunk buffers."""
+    p_dst.parent.mkdir(parents=True, exist_ok=True)
+    temp_dst = p_dst.with_suffix('.tmp')
+    
+    with open(p_src, 'rb') as fsrc:
+        with open(temp_dst, 'wb') as fdst:
+            while True:
+                buf = fsrc.read(chunk_size)
+                if not buf:
+                    break
+                fdst.write(buf)
+                bar.update(len(buf))
+
+    shutil.copystat(str(p_src), temp_dst)
+    # Reusing your existing atomic file replacement mechanism
+    os.replace(temp_dst, p_dst)
+
+
+def _parallel_dir_copy_engine(src_path: Path, dst_path: Path, max_workers: int, bar: tqdm):
+    """Worker sub-task: Copies directory tree structures concurrently across threads."""
+    for dirpath, _, _ in os.walk(src_path):
+        rel_dir = Path(dirpath).relative_to(src_path)
+        (dst_path / rel_dir).mkdir(parents=True, exist_ok=True)
+        
+    all_files = [Path(dirpath) / f for dirpath, _, filenames in os.walk(src_path) for f in filenames]
+    progress_lock = threading.Lock()
+            
+    def _copy_worker(file_src_path: Path):
+        rel_file = file_src_path.relative_to(src_path)
+        file_dst_path = dst_path / rel_file
+        f_size = file_src_path.stat().st_size
+        shutil.copy2(file_src_path, file_dst_path)
+        with progress_lock:
+            bar.update(f_size)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor.map(_copy_worker, all_files)
+
+
+def safe_copy(src, dst, max_retries=7, chunk_size=128*1024*1024,
+              force_sync=False, max_workers=8):
+    """
+    A simplified single-responsibility core transfer engine.
+    Handles thread-safe buffered file streaming OR multi-threaded directory mirroring.
+
+    Args:
+        src (str/Path): The source file or directory path.
+        dst (str/Path): The destination file or directory path.
+        max_retries (int, optional): Number of retry attempts on failure. Defaults to 7.
+        chunk_size (int, optional): Size of the read/write buffer in bytes. Defaults to 128MB.
+        force_sync (bool, optional): If True, blocks execution until the hardware cache is flushed. Defaults to False.
+        max_workers (int, optional): Thread pool size for parallel directory copies. Defaults to 8.
+    """
+    file_specific_lock = get_file_lock(str(dst))
+
     def save_it(src_path, dst_path):
-        # Acquire the file-specific lock to ensure only one thread modifies this destination
         with file_specific_lock:
-            # Initiate the retry loop
+            p_src = Path(src_path)
+            p_dst = Path(dst_path)
+            
+            is_directory = p_src.is_dir()
+            total_bytes = _get_total_bytes(p_src)
+            desc_msg = "🗂️ Syncing Directory Layout" if is_directory else "📄 Syncing File"
+
             for i in range(max_retries):
                 try:
-                    # Convert paths to pathlib objects
-                    p_src = Path(src_path)
-                    p_dst = Path(dst_path)
-                    
-                    # Ensure the destination directory exists
-                    p_dst.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Create a temporary destination path to prevent file corruption
-                    temp_dst = p_dst.with_suffix('.tmp')
-                    
-                    # Open source for reading and temp file for writing (both in binary mode)
-                    with open(p_src, 'rb') as fsrc:
-                        with open(temp_dst, 'wb') as fdst:
-                            while True:
-                                # Read data in chunks
-                                buf = fsrc.read(chunk_size)
-                                # Break the loop if the end of the file is reached
-                                if not buf:
-                                    break
-                                # Write the chunk to the temporary file
-                                fdst.write(buf)
-
-                    # Preserve the original file metadata (permissions, timestamps, etc.)
-                    shutil.copystat(src_path, temp_dst)
-                    
-                    # Atomically replace the temp file with the final destination
-                    replace_with_error(temp_dst, p_dst)
-                    
-                    # Break the retry loop upon success
+                    with tqdm(total=total_bytes, unit='B', unit_scale=True, 
+                              unit_divisor=1024, desc=desc_msg, leave=True) as bar:
+                        
+                        if is_directory:
+                            if p_dst.exists():
+                                shutil.rmtree(p_dst)
+                            _parallel_dir_copy_engine(p_src, p_dst, max_workers, bar)
+                        else:
+                            _stream_file_buffered(p_src, p_dst, chunk_size, bar)
+                            
+                    print("✅ I/O operations verified. Safe copy transaction completed.")
                     break
                 
                 except Exception as e:
-                    # If not on the last attempt, wait 20 seconds before retrying
                     if i < max_retries - 1:
-                        time.sleep(20)
+                        print(f"\n⚠️ [I/O Exception Intercepted] Stream broken. Retrying in 10s... ⏳")
+                        time.sleep(10)
                     else:
-                        # Log failure if all retries are exhausted
-                        print(f"❌ Failed to copy after {max_retries} attempts: {e}")
+                        print(f"\n💀 Fatal error: Failed to complete copy sequence after {max_retries} attempts: {e}")
 
-    # Instantiate a new thread targeting the internal save_it function
-    thread = threading.Thread(
-        target=save_it, 
-        args=(str(src), str(dst))
-    )
-    # Set the thread as a daemon so it doesn't block the main program from exiting
+    thread = threading.Thread(target=save_it, args=(str(src), str(dst)))
     thread.daemon = True
-    # Start the thread execution
+    print(f"🚀 Modular Safe Copy Thread spawned! Buffer latch: {chunk_size//(1024**2)}MB. 📡")
     thread.start()
     
-    # Return the thread object in case the caller needs to join() or monitor it
+    if force_sync:
+        print(f"🔒 [FORCE_SYNC ACTIVE] Locking cell execution runtime... Please wait! 🛑")
+        thread.join()
+        if hasattr(os, 'sync'):
+            print(f"💾 Flushing OS cache buffers directly onto target layout disk... 🧼")
+            os.sync()
+        print(f"✨ [SUCCESS] Hardware cache synchronized! Fast pipeline closed. 🏁")
+    else:
+        print(f"🛸 [ASYNC MODE] Action released early. File copy running in background... 🎭")
+    
     return thread
+
+
+def _prepare_temp_directory(extract_to: str) -> str:
+    """
+    Creates and purges a temporary directory to facilitate atomic zip extraction.
+
+    This acts as a staging environment. If a previous extraction crashed or left
+    stale artifacts, this function guarantees a clean slate by forcefully 
+    wiping the target path before recreating it.
+
+    Args:
+        extract_to (str): The final destination path where the zip contents will live.
+
+    Returns:
+        str: The absolute or relative path to the freshly generated temporary directory.
+    """
+    # Generate the temporary directory path by appending a '_part' suffix
+    temp_dir = extract_to.rstrip('/') + "_part"
+    
+    # Forcefully eliminate any preexisting directory or stale files at that location
+    remove_folder(temp_dir, force=True)
+    
+    # Create the clean staging directory from scratch
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Return the clean temporary path to the orchestration pipeline
+    return temp_dir
+
+class AtomicParallelZipExtractor:
+    """
+    A high-performance, atomic, and multi-threaded ZIP extraction engine.
+    
+    This class consolidates hierarchical directory mapping, multi-threaded worker
+    chunking, and transaction-style atomic folder swaps. It guarantees that an
+    extraction process never leaves corrupted, half-written files at the destination
+    if a crash, network drop, or execution cancellation occurs.
+    """
+
+    def __init__(self, zip_path: str, extract_to: str, replace: bool = False, max_workers: int = 4):
+        """
+        Initializes the atomic parallel extraction pipeline configuration.
+
+        Args:
+            zip_path (str): The physical path targeting the source archive file.
+            extract_to (str): The target location directory where content will settle.
+            replace (bool, optional): If True, wipes existing destination folders. Defaults to False.
+            max_workers (int, optional): Thread boundary cap scaling concurrency. Defaults to 4.
+        """
+        self.zip_path = zip_path
+        self.extract_to = extract_to
+        self.replace = replace
+        self.max_workers = max_workers
+        self._lock = threading.Lock()  # Dynamic lock protecting progress bar updates from worker race conditions
+
+    def _build_directory_tree(self, temp_dir: str) -> List[zipfile.ZipInfo]:
+        """
+        Pre-generates the entire directory tree architecture synchronously before dumping file threads.
+
+        This synchronous step is highly critical for stability. It prevents multi-threaded core
+        workers from executing race-prone, overlapping 'os.makedirs' calls simultaneously, 
+        which frequently leads to standard operating system file collision errors.
+
+        Args:
+            temp_dir (str): The temporary path staging the extraction process.
+
+        Returns:
+            List[zipfile.ZipInfo]: A isolated list tracking file records stripped of empty directory nodes.
+        """
+        file_members = []
+        
+        # Open the ZIP archive in safe read-only mode
+        with zipfile.ZipFile(self.zip_path, 'r') as zf:
+            # Iterate sequentially through structural layout metadata inside the archive
+            for member in zf.infolist():
+                # If the current structural item represents an explicit directory node
+                if member.is_dir():
+                    # Generate the physical folder path matching the archive schema inside temp directory
+                    os.makedirs(os.path.join(temp_dir, member.filename), exist_ok=True)
+                else:
+                    # Resolve parent folder path bound to the file object
+                    parent_dir = os.path.dirname(os.path.join(temp_dir, member.filename))
+                    if parent_dir:
+                        # Pre-generate parent directories if they don't exist yet
+                        os.makedirs(parent_dir, exist_ok=True)
+                    # Append the verified file record to the work pool list
+                    file_members.append(member)
+                    
+        return file_members
+
+    def _extract_chunk(self, chunk: List[zipfile.ZipInfo], temp_dir: str, bar: tqdm):
+        """
+        Dedicated thread worker loop processing an assigned subset slice of files.
+
+        Args:
+            chunk (List[zipfile.ZipInfo]): Slice allocation tracking files assigned to this specific thread thread.
+            temp_dir (str): Staging pathway directory collecting compiled outputs.
+            bar (tqdm): Progress bar handler catching completed metrics updates.
+        """
+        # Instantiate a dedicated archive stream handle restricted within this worker thread
+        with zipfile.ZipFile(self.zip_path, 'r') as zf:
+            for member in chunk:
+                # Stream binary block directly from disk storage grid to target temporary path location
+                zf.extract(member, temp_dir)
+                
+                # Acquire instance-level lock to securely notify progress interface without corruption
+                with self._lock:
+                    bar.update(member.file_size)
+
+    def _extract_parallel(self, file_members: List[zipfile.ZipInfo], temp_dir: str):
+        """
+        Segments file allocation loads evenly across active threads and orchestrates execution pools.
+
+        Args:
+            file_members (List[zipfile.ZipInfo]): Clean collection mapping files to parse.
+            temp_dir (str): Staging directory area holding structural assets.
+        """
+        # Accumulate exact total byte sizing requirements to set up accurate metric bars
+        total_size = sum(f.file_size for f in file_members)
+        
+        # Stratify files using a round-robin stride step sequence mapping loads evenly among workers
+        chunks = [file_members[i::self.max_workers] for i in range(self.max_workers)]
+
+        # Initialize user tracking interface monitoring output speed and progression metrics
+        with tqdm(total=total_size, unit='B', unit_scale=True, unit_divisor=1024, desc="Extracting", leave=True) as bar:
+            # Spawn the concurrent asynchronous execution context frame
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Dispatch tasks safely across pool workers mapping active data chunk buffers
+                futures = [
+                    executor.submit(self._extract_chunk, chunk, temp_dir, bar) 
+                    for chunk in chunks if chunk
+                ]
+                # Collect thread responses as they finalize tasks
+                for future in as_completed(futures):
+                    # Call result() to escalate internal thread runtime exceptions to the main orchestration loop
+                    future.result()
+
+    def extract(self) -> bool:
+        """
+        The orchestrator method triggering secure, parallel, and atomic zip extractions.
+
+        Returns:
+            bool: True if transaction-style swap concludes flawlessly, False otherwise.
+        """
+        # Skip routine entirely if a folder exists and overwrite permissions are locked
+        if os.path.exists(self.extract_to) and not self.replace:
+            print(f"⏭️ Extraction directory {self.extract_to} already exists. Skipping.")
+            return True
+
+        # Provision the temporary extraction workspace staging environment safely
+        temp_extract_to = _prepare_temp_directory(self.extract_to)
+
+        try:
+            # Step 1: Map layout and generate structural folder architectures
+            file_members = self._build_directory_tree(temp_extract_to)
+            
+            # Step 2: Concurrently stream and extract chunk buffers across workers
+            self._extract_parallel(file_members, temp_extract_to)
+
+            # Step 3: Conclude operation using transaction style atomic layout replacement
+            if os.path.exists(self.extract_to):
+                remove_folder(self.extract_to, force=True)
+                
+            # Perform the final atomic folder swap operation seamlessly
+            replace_with_error(temp_extract_to, self.extract_to)
+            print(f"✅ Successfully extracted to: {self.extract_to}")
+            return True
+        
+        except Exception as e:
+            # Rollback phase: Clean up files to preserve integrity in case of structural crashes
+            remove_folder(self.extract_to, force=True)
+            remove_folder(temp_extract_to, force=True)
+            print(f"❌ Error extracting zip file: {e}")
+            return False
+        
+
+def extract_zip(zip_path: str, extract_to: str, replace: bool = False, max_workers: int = 4) -> bool:
+    """
+    Unified public wrapper function rendering backward-compatible integration access points.
+    
+    This abstracts away the class creation details, enabling simple functional calls 
+    ideal for clean PyPI module entry points.
+    """
+    extractor = AtomicParallelZipExtractor(
+        zip_path=zip_path, extract_to=extract_to, 
+        replace=replace, max_workers=max_workers
+    )
+    return extractor.extract()

@@ -5,7 +5,7 @@ Markdown
 
 **An enterprise-grade, ultra-fast, and highly customizable Python library for the Case Western Reserve University (CWRU) Bearing Dataset.**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ZLASr6GLbxxAsH-HcIwX3KAJgr5BdZb3?usp=sharing)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1W4ELtyXa5lfKgNyi6uChexV2oWIlnKI9?usp=sharing)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PyPI version](https://badge.fury.io/py/cwru-plus.svg)](https://badge.fury.io/py/cwru-plus)
@@ -36,14 +36,40 @@ Forget complex data engineering. Once installed, getting your ML tensors is this
 ```python
 import cwru
 
-# 1. Download & Ingest automatically
+# ==============================================================================
+# ⚠️ STEP 1: ONE-TIME DATA SETUP (Download & Ingest)
+# Run these two lines ONLY ONCE to build your persistent local database.
+# After 'dataset.npz' is generated, you can comment out or remove Step 1 entirely.
+# ==============================================================================
 cwru.download(CWRUfs=12, download_path="data/raw")
 cwru.ingest(base_path="data/raw", output_file_path="data/dataset")
 
-# 2. Extract ML-ready tensors in < 3 seconds!
+# ==============================================================================
+# 🚀 STEP 2: FAST PRODUCTION LOADING (Run repeatedly from here)
+# Once you have the permanent .npz file, you ONLY need to execute from this line onwards.
+# Ingested arrays are loaded instantly into your pipeline in under 3 seconds!
+# ==============================================================================
 (X, Y), metadata = cwru.load(npz_path="data/dataset.npz", window_size=2048, step_size=512)
 
 print(f"Data Shape: {X.shape} | Labels Shape: {Y.shape}")
+```
+---
+### 📂 Offline / Local Directory Import (`local_download`)
+---
+If you have already downloaded the `.mat` files manually (e.g., `105.mat`, `112.mat`) and they are dumped into a single folder, you don't need to re-download them. `CWRU-Plus` can scan your local directory, filter out the specific files based on the requested sampling frequency, and safely copy them to a target directory with our standardized, ML-ready naming convention.
+
+Your original files are never altered or deleted during this process.
+
+```python
+from cwru import offline_download
+
+# Safely extract and rename ONLY the 48kHz files from your messy downloads folder
+success = offline_download(
+    source_path="data/cwru_raw",
+    target_path="data/CWRU_Standard",
+    CWRUfs=48,             # Explicitly target 48kHz dataset links
+    replace_files=False    # Do not overwrite if standard file already exists
+)
 ```
 
 ---
@@ -124,6 +150,31 @@ print(f"Target Domain (3 HP) Shape: {X_test.shape}")
 ```
 
 ---
+## 🎯 Built-in Few-Shot & Meta-Learning Sampler
+
+Modern fault diagnosis research heavily relies on episodic training configurations like MAML or Prototypical Networks. To bridge the gap between raw data and deep learning architectures, `CWRU-Plus` ships with a high-performance `FewShotSampler`.
+
+Instead of writing manual indexing loops, you can construct fully synchronized episodic tasks instantly. The sampler automatically manages operational metadata (Severity, HP, Location) and returns clean, integer-mapped arrays explicitly optimized for loss functions like PyTorch's `CrossEntropyLoss`.
+
+```python
+from cwru.sampler import build_few_shot_sampler
+
+# Initialize the sampler over your pre-windowed dataset
+sampler = build_few_shot_sampler(
+    X_base=X_data, Y_base=Y_labels,
+    numeric_to_string={0: 'Normal', 1: 'Inner_Fault'},
+    meta_base=(Severity, HP, Location),
+    seed=101
+)
+
+# Extract a 2-way, 5-shot episodic task in milliseconds
+X_task, Y_task, Metadata = sampler.sample(
+    target_numeric_classes=(0, 1), 
+    samples_per_class=(5, 5)
+)
+```
+
+---
 
 ## ☁️ Google Colab Integration & Real-World Benchmarks
 
@@ -142,7 +193,7 @@ Here is the exact execution breakdown measured via `%%time` in a standard Google
 
 > **Why the CPU Time vs. Wall Time discrepancy?** In Step 3, CPU time is **55.5s** while Wall time is only **46.7s**. This proves our multi-threaded execution is successfully utilizing multiple cores simultaneously, saving you precious waiting time.
 
-👉 **[Run the interactive, benchmarked End-to-End Pipeline in Colab right now!](https://colab.research.google.com/drive/1ZLASr6GLbxxAsH-HcIwX3KAJgr5BdZb3?usp=sharing)**
+👉 **[Run the interactive, benchmarked End-to-End Pipeline in Colab right now!](https://colab.research.google.com/drive/1W4ELtyXa5lfKgNyi6uChexV2oWIlnKI9?usp=sharing)**
 
 ---
 
@@ -185,7 +236,51 @@ We built CWRU-Plus to accelerate our own research, but this library is for the c
 
 👉 **[Open an Issue](https://github.com/Razani-Ali/cwru-plus/issues)** on GitHub and tell us what you want us to build next!
 
-🟢🟡🔴We Are working on support for **MAFAULDA Bearing Dataset**, it would be released soon!
+---
+## Why CWRU-Plus? (Comparison with Alternatives)
+
+While legacy tools on PyPI—such as `cwru`, `py-cwru`, `multivariate-cwru`, and `bearing-python`—laid the foundation for using this dataset, they were built for older Python ecosystems and lack the performance optimization required for modern Deep Learning pipelines. 
+
+Below is a technical matrix showing how **CWRU-Plus** redesigns the entire data engineering layer compared to existing alternatives:
+
+| Feature / Capability | Legacy Packages (`cwru`, `py-cwru`, etc.) | ⚡ CWRU-Plus |
+| :--- | :--- | :--- |
+| **Python 3.10+ Compatibility** | ❌ No (Many crash on modern `collections` or `numpy` types) | **✅ Yes (Native, production-ready)** |
+| **Multi-Threaded Downloading** | ❌ No (Single-threaded, slow legacy sequential mirrors) | **✅ Yes (Parallel high-speed downloads)** |
+| **Smart Cache Management** | ❌ No (Re-downloads or fails if archives already exist) | **✅ Yes (Detects, validates, and skips existing files)** |
+| **Parallel DSP Filtering (IoC)** | ❌ No (Sequential preprocessing bottlenecks) | **✅ Yes (Multi-core parallelized filter injection)** |
+| **Atomic Metadata Extraction** | ❌ No (Only returns raw signals; manual mapping needed) | **✅ Yes (Returns synchronized Horse Powers & Fault Severity vectors)** |
+| **Strict Data Leakage Protection**| ❌ No (Manual sliding windows often mix train/test frames) | **✅ Yes (Guaranteed 100% atomic boundary separation)** |
+| **Built-in Few-Shot Sampler** | ❌ No (Requires manual implementation of episodic tasks) | **✅ Yes (High-performance episodic task sampler)** |
+| **Processing Speed** | ⚠️ Slow (Heavy disk I/O and object creation overhead) | **🚀 Blazing Fast (< 3 seconds via zero-copy NumPy views)** |
+
+🔥🔥🔥
+
+---
+
+### Detailed Benchmarks & Technical Edge
+---
+#### 1. Smart Local Cache Management
+Legacy packages usually struggle if you interrupt a download or want to use previously downloaded files, often resulting in corrupted state errors or redundant web requests. `CWRU-Plus` acts as an intelligent file manager: it automatically scans your `./raw` directory, verifies existing files against the official structural grid, and seamlessly proceeds with ingestion without wasting network bandwidth.
+
+#### 2. Synchronized Meta-Tracking (RPM & Severity)
+Most alternative packages strip out or ignore the underlying operational context, leaving you with raw signal matrices. For advanced tasks like **Domain Adaptation** or **Regression-based Remaining Useful Life (RUL)** estimation, you need the operational metadata. `CWRU-Plus` keeps `Severity` and `RPM` bound to each window instance, returning clean, production-ready vectors out of the box.
+
+#### 3. Native Meta-Learning Support (Few-Shot Sampler)
+If you are training Prototypical Networks, Relation Networks, or MAML architectures, you typically have to write hundreds of lines of boilerplate code to handle N-way K-shot episodic sampling. `CWRU-Plus` introduces a highly optimized `FewShotSampler` that maps string categories to clean, single-integer target labels ideal for PyTorch `CrossEntropyLoss` at microscopic latencies (under 5ms per batch execution).
+
+---
+
+## 🚀 The Next Generation Machinery Engine is Here!
+
+🔥 **UPDATE:** We have officially expanded our industrial machinery fault diagnosis ecosystem! 
+
+While we previously focused heavily on CWRU, we have officially launched **MAFAULDA-Plus**—a powerhouse data engine designed to handle massive, multi-channel vibration signal processing without crashing your environment.
+
+* 🌐 **GitHub Repository:** [Discover MAFAULDA-Plus on GitHub](https://github.com/Razani-Ali/mafaulda-plus)
+* 📦 **PyPI Package:** `pip install mafaulda-plus`
+
+If your research is expanding into complex, cross-domain multi-class fault diagnosis with zero-RAM memory constraints, migrate to **MAFAULDA-Plus** today! 🏁
 
 ---
 

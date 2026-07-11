@@ -10,17 +10,14 @@ standardized filenames, and delegates the heavy lifting to the concurrent utilit
 
 import os
 from typing import Dict, Any
+import shutil
 
 # Importing the generalized parallel execution engine from the local utilities module
 from .utilities import run_parallel_downloads
 
 # Attempt to import dataset URL configurations safely
-try:
-    from config.urls48 import CWRU_48kHz_links
-    from config.urls12 import CWRU_12kHz_links
-except ImportError:
-    # Ignore import errors silently; the user might handle them elsewhere or provide alternatives
-    pass
+from .config.urls48 import CWRU_48kHz_links
+from .config.urls12 import CWRU_12kHz_links
 
 def generate_cwru_filename(group_name: str, file_info: Dict[str, Any]) -> str:
     """
@@ -146,3 +143,79 @@ def download_CWRU_files(
 
     # Return True only if the number of successful downloads matches the total requested files
     return total_files == successful
+
+
+def local_download(
+    source_path: str,
+    target_path: str = 'data/CWRU/RawFiles',
+    CWRUfs: int = 12,
+    replace_files: bool = False
+) -> bool:
+    """
+    Scans a local directory for manually downloaded CWRU .mat files and safely copies them 
+    to a target directory with standardized filenames, filtering strictly by the requested 
+    sampling frequency (CWRUfs). Original files are left completely untouched.
+
+    Args:
+        source_path (str): The local directory containing the user's manually downloaded .mat files.
+        target_path (str, optional): The destination directory for the standardized files. 
+                                     Defaults to 'data/CWRU/RawFiles'.
+        CWRUfs (int, optional): The requested sampling frequency (12 or 48) to filter files. Defaults to 12.
+        replace_files (bool, optional): If True, overwrites existing files in the target path. Defaults to False.
+
+    Returns:
+        bool: True if at least one file was successfully processed, False if no matching files were found.
+
+    Raises:
+        ValueError: If an unsupported sampling frequency is requested.
+    """
+    # Ensure the destination directory exists; create it if it doesn't
+    os.makedirs(target_path, exist_ok=True)
+
+    # Select the appropriate URL dictionary based on the requested sampling frequency[cite: 3]
+    if CWRUfs == 12:
+        all_groups = CWRU_12kHz_links() # Load 12 kHz dataset links[cite: 3]
+    elif CWRUfs == 48:
+        all_groups = CWRU_48kHz_links() # Load 48 kHz dataset links[cite: 3]
+    else:
+        # Raise an error if the user requests an unsupported sampling frequency[cite: 3]
+        raise ValueError(f"Dataset with sampling frequency {CWRUfs} is not supported.")
+
+    successful_copies = 0
+    missing_files = 0
+
+    print(f"▶️ Scanning '{source_path}' for manually downloaded {CWRUfs}kHz files...")
+
+    # Iterate over each category/group in the configured links[cite: 3]
+    for group_name, files in all_groups.items():
+        # Iterate over each individual file's metadata dictionary within the group[cite: 3]
+        for f_info in files:
+            # 1. Extract the raw filename from the end of the URL (e.g., '105.mat')
+            raw_url = f_info['url']
+            original_filename = raw_url.split('/')[-1]
+            source_file_path = os.path.join(source_path, original_filename)
+
+            # 2. Check if this specific file exists in the user's local directory
+            if os.path.exists(source_file_path):
+                # Generate the standardized target filename using the helper function[cite: 3]
+                standard_filename = generate_cwru_filename(group_name, f_info) #[cite: 3]
+                target_file_path = os.path.join(target_path, standard_filename)
+
+                # Skip copying if the file already exists and replace_files is False
+                if os.path.exists(target_file_path) and not replace_files:
+                    successful_copies += 1
+                    continue
+
+                # Safely copy the file to the new location with the standardized name
+                shutil.copy2(source_file_path, target_file_path)
+                successful_copies += 1
+            else:
+                missing_files += 1
+
+    # Print a formatted summary of the local transfer operation
+    print("\nLocal Import Summary:")
+    print(f"✅  Successfully mapped & copied: {successful_copies} files")
+    print(f"⚠️  Missing files (not found in source): {missing_files} files")
+    print(f"📁  Standardized files saved to: {target_path}\n")
+
+    return successful_copies > 0
