@@ -16,8 +16,8 @@ import shutil
 from .utilities import run_parallel_downloads
 
 # Attempt to import dataset URL configurations safely
-from .config.urls48 import CWRU_48kHz_links
-from .config.urls12 import CWRU_12kHz_links
+from .urls48 import CWRU_48kHz_links
+from .urls12 import CWRU_12kHz_links
 
 def generate_cwru_filename(group_name: str, file_info: Dict[str, Any]) -> str:
     """

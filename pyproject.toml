@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cwru-plus"
-version = "0.2.2"
+version = "0.2.3"
 description = "An enterprise-grade, ultra-fast pipeline for downloading, filtering, and windowing the CWRU bearing dataset."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["cwru", "cwru.config"]
+packages = ["cwru"]
 
 [project.urls]
 Homepage = "https://github.com/Razani-Ali/cwru-plus"
