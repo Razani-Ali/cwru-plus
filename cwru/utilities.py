@@ -76,6 +76,24 @@ def replace_with_error(src: str, dest: str) -> bool:
         # Catch and log errors, such as file locks or permission issues
         print(f"❌ Error replacing {src} with {dest}: {e}")
         return False
+    
+def is_file_empty(file_path: str) -> bool:
+    """
+    Checks if a local file is empty (has a size of 0 bytes).
+
+    This function is used to detect corrupted or failed downloads where the server 
+    responds with an empty body, resulting in a 0 KB file on the disk.
+
+    Args:
+        file_path (str): The physical path to the file on the filesystem.
+
+    Returns:
+        bool: True if the file exists and its size is 0 bytes; False otherwise.
+    """
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        # Return True if file size is 0 bytes
+        return os.path.getsize(file_path) <= 10
+    return False
 
 def download_file(url: str, target_path: str, max_retries: int = 10, 
                   retry_delay: float = 3.0, replace: bool = False) -> bool:
@@ -126,6 +144,13 @@ def download_file(url: str, target_path: str, max_retries: int = 10,
 
             # Atomically rename the complete temporary file to the final target path
             replace_with_error(temp_path, target_path)
+            
+            # --- NEW: Check if the downloaded file is empty (0 bytes) ---
+            if is_file_empty(target_path):
+                # Force an exception to trigger the existing retry and cleanup loop
+                raise IOError(f"Downloaded file {filename} is empty (0 bytes).")
+            # -------------------------------------------------------------
+
             print(f"✅ [Success] Fully downloaded: {filename}")
             return True
             
