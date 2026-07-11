@@ -219,48 +219,48 @@ class CWRUPipeline:
             num_parts=num_parts
         )
 
-
-def build_few_shot_sampler(
-    X_base: np.ndarray,
-    Y_base: np.ndarray,
-    numeric_to_string: Dict[int, str],
-    meta_base: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = (None, None, None),
-    seed: Optional[int] = None
-): # -> FewShotSampler
-    """
-    Initializes and returns a high-performance FewShotSampler instance for pre-windowed datasets.
-    
-    This wrapper abstracts the instantiation process, allowing seamless integration into 
-    data loading pipelines. The returned sampler object can be queried repeatedly via 
-    its `.sample()` method to extract isolated episodic tasks for meta-learning.
-
-    Args:
-        X_base (np.ndarray): The pre-windowed 3D input tensor of shape [Total_Windows, Channels, Length].
-        Y_base (np.ndarray): Master 1D array of original string labels corresponding to each window.
-        numeric_to_string (Dict[int, str]): Dictionary mapping PyTorch-compatible integer classes 
-                                            to database string names (e.g., {0: 'Normal', 1: 'Inner_Fault'}).
-        meta_base (Tuple[np.ndarray, np.ndarray, np.ndarray], optional): 
-            Bound operational metadata arrays corresponding to each window instance.
-            Expected format: (Severity_Array, HP_Array, Location_Array). 
-            Defaults to (None, None, None).
-        seed (int, optional): Pseudo-random generator state for exact task reproducibility.
-
-    Returns:
-        FewShotSampler: An initialized sampler object ready for `.sample()` queries.
-    """
-    # Initialize the core sampler using the pre-processed 3D tensors
-    sampler = FewShotSampler(
-        X_base=X_base, 
-        Y_base=Y_base, 
-        numeric_to_string=numeric_to_string,
-        meta_base=meta_base
-    )
-    
-    # Lock the seed if provided for reproducible episodic generation
-    if seed is not None:
-        sampler.reset_seed(seed)
+    @staticmethod
+    def build_few_shot_sampler(
+        X_base: np.ndarray,
+        Y_base: np.ndarray,
+        numeric_to_string: Dict[int, str],
+        meta_base: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = (None, None, None),
+        seed: Optional[int] = None
+    ): # -> FewShotSampler
+        """
+        Initializes and returns a high-performance FewShotSampler instance for pre-windowed datasets.
         
-    return sampler
+        This wrapper abstracts the instantiation process, allowing seamless integration into 
+        data loading pipelines. The returned sampler object can be queried repeatedly via 
+        its `.sample()` method to extract isolated episodic tasks for meta-learning.
+
+        Args:
+            X_base (np.ndarray): The pre-windowed 3D input tensor of shape [Total_Windows, Channels, Length].
+            Y_base (np.ndarray): Master 1D array of original string labels corresponding to each window.
+            numeric_to_string (Dict[int, str]): Dictionary mapping PyTorch-compatible integer classes 
+                                                to database string names (e.g., {0: 'Normal', 1: 'Inner_Fault'}).
+            meta_base (Tuple[np.ndarray, np.ndarray, np.ndarray], optional): 
+                Bound operational metadata arrays corresponding to each window instance.
+                Expected format: (Severity_Array, HP_Array, Location_Array). 
+                Defaults to (None, None, None).
+            seed (int, optional): Pseudo-random generator state for exact task reproducibility.
+
+        Returns:
+            FewShotSampler: An initialized sampler object ready for `.sample()` queries.
+        """
+        # Initialize the core sampler using the pre-processed 3D tensors
+        sampler = FewShotSampler(
+            X_base=X_base, 
+            Y_base=Y_base, 
+            numeric_to_string=numeric_to_string,
+            meta_base=meta_base
+        )
+        
+        # Lock the seed if provided for reproducible episodic generation
+        if seed is not None:
+            sampler.reset_seed(seed)
+            
+        return sampler
 
 # Bind the pipeline object directly to the module namespace for a seamless user experience
 sys.modules[__name__] = CWRUPipeline()
