@@ -28,8 +28,8 @@ dependencies = [
 [tool.setuptools]
 packages = ["cwru"]
 
-[tool.setuptools.package-data]
-"cwru" = ["*.py"]
+[tool.setuptools]
+packages = ["cwru", "cwru.config"]
 
 [project.urls]
 Homepage = "https://github.com/Razani-Ali/cwru-plus"
