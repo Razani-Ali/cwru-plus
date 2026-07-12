@@ -407,6 +407,7 @@ def generate_stratified_file_split(
     Returns:
         Tuple[np.ndarray, np.ndarray, np.ndarray]: (train_indices, val_indices, test_indices)
     """
+
     if (train_ratio + val_ratio) > 1.0:
         raise ValueError(f"Sum of ratios must be less or equal to 1.0, got {train_ratio + val_ratio}")
 
@@ -419,38 +420,42 @@ def generate_stratified_file_split(
     unique_labels = np.unique(y)
     
     for label in unique_labels:
-        # 1. Find all Relate Indexes
+        # 1. Find Related Indices
         label_mask = (y == label)
         class_indices = np.where(label_mask)[0]
         
-        # 2. Extract Unique Files for These Classes and Blend Them
+        # 2. Extract and Shuffle Unique Files
         files_in_label = np.unique(file_ids[label_mask])
         np.random.shuffle(files_in_label)
         
         total_files = len(files_in_label)
-        
-        # Error Handling: If There is no File
         if total_files == 0:
             continue
-        if total_files < 3 and val_ratio > 0 and 1-(train_ratio+val_ratio)>0:
+            
+        # 3. Calculate Slices
+        if total_files >= 3:
+            train_count = int(np.floor(total_files * train_ratio))
+            val_count = int(np.ceil(total_files * val_ratio)) if val_ratio > 0 else 0
+            
+            # Sum of Counts Shouldn't be more than Available Files
+            if train_count + val_count > total_files:
+                train_count = total_files - val_count
+                
+            train_end = train_count
+            val_end = train_end + val_count
+        else:
+            # Edge Error
             warnings.warn(
                 f"Class '{label}' has only {total_files} file(s). "
-                "Cannot perform a perfect 3-way split. Data might be assigned entirely to train set."
+                "Forcing allocation entirely to Train/Test based on availability."
             )
-            
-        # 3. Calculate Slicing Points
-        train_end = int(np.round(total_files * train_ratio))
-        val_end = train_end + int(np.round(total_files * val_ratio))
-        
-        # At Least There Must be One File for Train Data
-        if train_end == 0 and total_files > 0:
-            train_end = 1
-            val_end = 1
-            
+            train_end = 1 if total_files > 0 else 0
+            val_end = 1 if total_files > 1 else train_end
+
         train_files = set(files_in_label[:train_end])
         val_files = set(files_in_label[train_end:val_end])
         
-        # 4. Map Files to Slicing Indexes
+        # 4. Map Files to Indices
         for idx in class_indices:
             current_file = file_ids[idx]
             if current_file in train_files:
@@ -460,12 +465,12 @@ def generate_stratified_file_split(
             else:
                 test_idx.append(idx)
 
-    # 5. Turn Them Into Arrays and Blend Them
+    # 5. Numpy Arrays
     train_idx_arr = np.array(train_idx, dtype=int)
     val_idx_arr = np.array(val_idx, dtype=int)
     test_idx_arr = np.array(test_idx, dtype=int)
     
-    # 6. Shuffle Them
+    # 6. Final Shuffle
     np.random.shuffle(train_idx_arr)
     np.random.shuffle(val_idx_arr)
     np.random.shuffle(test_idx_arr)
