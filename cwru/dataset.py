@@ -1,7 +1,6 @@
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from typing import Tuple, List, Optional, Dict
-import warnings
 
 
 class CWRURecordFilter:
@@ -432,25 +431,46 @@ def generate_stratified_file_split(
         if total_files == 0:
             continue
             
-        # 3. Calculate Slices
-        if total_files >= 3:
+        # 3. Slicing calculations for very low file counts (e.g., CWRU/MAFAULDA)
+        test_ratio = 1.0 - (train_ratio + val_ratio)
+        
+        if total_files >= 4 and test_ratio > 0.02 and val_ratio > 0.02:
+            # Standard balanced split for adequate file sizes
             train_count = int(np.floor(total_files * train_ratio))
-            val_count = int(np.ceil(total_files * val_ratio)) if val_ratio > 0 else 0
+            val_count = int(np.ceil(total_files * val_ratio))
             
-            # Sum of Counts Shouldn't be more than Available Files
-            if train_count + val_count > total_files:
-                train_count = total_files - val_count
-                
-            train_end = train_count
-            val_end = train_end + val_count
+            if train_count + val_count >= total_files:
+                train_count = max(1, total_files - val_count - 1)
+            
+            train_end = max(1, train_count)
+            val_end = train_end + max(1, val_count)
+            
         else:
-            # Edge Error
-            warnings.warn(
-                f"Class '{label}' has only {total_files} file(s). "
-                "Forcing allocation entirely to Train/Test based on availability."
-            )
-            train_end = 1 if total_files > 0 else 0
-            val_end = 1 if total_files > 1 else train_end
+            # Handle extreme low-file regimes (e.g., exactly 4 files per class)
+            if test_ratio <= 0.02 or np.isclose(test_ratio, 0.0):
+                # 2-way split (Train / Val only, No Test set)
+                if total_files == 4:
+                    train_end = 3
+                    val_end = 4
+                else:
+                    train_end = max(1, int(np.round(total_files * train_ratio)))
+                    val_end = total_files
+            else:
+                # 3-way split with very limited files -> Distribution skew is inevitable
+                print(
+                    f"Class '{label}' has only {total_files} file(s). Performing a strict 3-way split "
+                    "in a low-file regime will inevitably skew the statistical class distribution across splits. "
+                    "Consider setting val_ratio=0.0 for a clean 2-way split.")
+                
+                if total_files == 4:
+                    train_end = 2  # 2 files for Train
+                    val_end = 3    # 1 file for Val (Remaining 1 file goes to Test)
+                elif total_files == 3:
+                    train_end = 1
+                    val_end = 2
+                else:
+                    train_end = 1
+                    val_end = total_files
 
         train_files = set(files_in_label[:train_end])
         val_files = set(files_in_label[train_end:val_end])
