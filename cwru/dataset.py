@@ -1,6 +1,7 @@
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, List, Optional, Dict
+import warnings
 
 
 class CWRURecordFilter:
@@ -206,9 +207,9 @@ class RecordStorage:
         """Initializes empty storage lists for signals and corresponding metadata."""
         self.X = []
         self.window_counts = []  # ⭐️ Keeps track of window counts instead of large lists
-        self.Y, self.S, self.HP, self.Loc = [], [], [], []
+        self.Y, self.S, self.HP, self.Loc, self.file_idx = [], [], [], [], []
 
-    def add_windows(self, windows: np.ndarray, fault: str, severity: str, hp: int, loc: int):
+    def add_windows(self, windows: np.ndarray, fault: str, severity: str, hp: int, loc: int, file_idx: int):
         """
         Registers a batch of extracted windows and stores their shared metadata once.
         
@@ -218,6 +219,7 @@ class RecordStorage:
             severity (str): Fault severity.
             hp (int): Horsepower load.
             loc (int): Sensor location.
+            file_idx (int): File ID
         """
         self.X.append(windows)
         self.window_counts.append(windows.shape[0])
@@ -227,6 +229,7 @@ class RecordStorage:
         self.S.append(severity)
         self.HP.append(hp)
         self.Loc.append(loc)
+        self.file_idx.append(file_idx)
 
     def compile(self, fault_category: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -256,11 +259,12 @@ class RecordStorage:
         S_out = np.repeat(self.S, counts)
         HP_out = np.repeat(self.HP, counts).astype(np.int32)
         Loc_out = np.repeat(self.Loc, counts).astype(np.int32)
+        File_idx_out = np.repeat(self.file_idx. counts).astype(np.int32)
         
         # Generate dynamic, formatted string labels
         Y_out = CWRULabelGenerator.generate(Y_base, S_out, Loc_out, fault_category)
         
-        return X_out, Y_out, S_out, HP_out, Loc_out
+        return X_out, Y_out, S_out, HP_out, Loc_out, File_idx_out
 
 
 class CWRUDatasetBuilder:
@@ -348,7 +352,8 @@ class CWRUDatasetBuilder:
                     fault=data["Fault"][idx], 
                     severity=data["Severity"][idx], 
                     hp=data["HorsePower"][idx], 
-                    loc=data["Location"][idx]
+                    loc=data["Location"][idx],
+                    file_idx=idx,
                 )
 
         # 4. Compile Outputs
@@ -357,12 +362,12 @@ class CWRUDatasetBuilder:
         
         # Transpose list of tuples -> Tuple of lists: ([X1, X2], [Y1, Y2], ...)
         # This groups all features (X), labels (Y), etc., across parts together
-        X_list, Y_list, S_list, HP_list, Loc_list = zip(*compiled_parts)
+        X_list, Y_list, S_list, HP_list, Loc_list, file_idx_list = zip(*compiled_parts)
         
         # 5. Format Final Output
         if num_parts is None:
             # Flattened output: Pull the first index since there is only 1 part
-            X_f, Y_f, S_f, HP_f, Loc_f = X_list[0], Y_list[0], S_list[0], HP_list[0], Loc_list[0]
+            X_f, Y_f, S_f, HP_f, Loc_f, idx_f = X_list[0], Y_list[0], S_list[0], HP_list[0], Loc_list[0], file_idx_list[0]
         else:
             # Temporal output: Stack lists into an additional 0-th dimension for Cross-Validation folds
             X_f = np.stack(X_list, axis=0)
@@ -370,8 +375,99 @@ class CWRUDatasetBuilder:
             S_f = np.stack(S_list, axis=0)
             HP_f = np.stack(HP_list, axis=0)
             Loc_f = np.stack(Loc_list, axis=0)
+            idx_f = np.stack(file_idx_list, axis=0)
             
         print(f"🎉 Dataset built successfully! Tensor Shape: {X_f.shape}")
         
         # ⭐️ Added tuple(sensors) to match the expected return signature for downstream modules
-        return (X_f, Y_f), (S_f, HP_f, Loc_f)
+        return (X_f, Y_f, idx_f), (S_f, HP_f, Loc_f)
+
+
+def generate_stratified_file_split(
+    y: np.ndarray, 
+    file_ids: np.ndarray, 
+    train_ratio: float = 0.75, 
+    val_ratio: float = 0.25, 
+    random_seed: int = 42
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Generates stratified random split indices based on file IDs to prevent data leakage.
+    
+    This function ensures that:
+    1. Windows from the same physical file are never split across Train/Val/Test sets.
+    2. The class distribution (stratification) is maintained across the splits.
+
+    Args:
+        y (np.ndarray): 1D array of labels for each window.
+        file_ids (np.ndarray): 1D array of file identifiers corresponding to each window.
+        train_ratio (float): Proportion of files to include in the train split.
+        val_ratio (float): Proportion of files to include in the validation split.
+        random_seed (int): Random seed for reproducibility.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]: (train_indices, val_indices, test_indices)
+    """
+    if (train_ratio + val_ratio) > 1.0:
+        raise ValueError(f"Sum of ratios must be less or equal to 1.0, got {train_ratio + val_ratio}")
+
+    np.random.seed(random_seed)
+    
+    train_idx: List[int] = []
+    val_idx: List[int] = []
+    test_idx: List[int] = []
+    
+    unique_labels = np.unique(y)
+    
+    for label in unique_labels:
+        # 1. Find all Relate Indexes
+        label_mask = (y == label)
+        class_indices = np.where(label_mask)[0]
+        
+        # 2. Extract Unique Files for These Classes and Blend Them
+        files_in_label = np.unique(file_ids[label_mask])
+        np.random.shuffle(files_in_label)
+        
+        total_files = len(files_in_label)
+        
+        # Error Handling: If There is no File
+        if total_files == 0:
+            continue
+        if total_files < 3 and val_ratio > 0 and 1-(train_ratio+val_ratio)>0:
+            warnings.warn(
+                f"Class '{label}' has only {total_files} file(s). "
+                "Cannot perform a perfect 3-way split. Data might be assigned entirely to train set."
+            )
+            
+        # 3. Calculate Slicing Points
+        train_end = int(np.round(total_files * train_ratio))
+        val_end = train_end + int(np.round(total_files * val_ratio))
+        
+        # At Least There Must be One File for Train Data
+        if train_end == 0 and total_files > 0:
+            train_end = 1
+            val_end = 1
+            
+        train_files = set(files_in_label[:train_end])
+        val_files = set(files_in_label[train_end:val_end])
+        
+        # 4. Map Files to Slicing Indexes
+        for idx in class_indices:
+            current_file = file_ids[idx]
+            if current_file in train_files:
+                train_idx.append(idx)
+            elif current_file in val_files:
+                val_idx.append(idx)
+            else:
+                test_idx.append(idx)
+
+    # 5. Turn Them Into Arrays and Blend Them
+    train_idx_arr = np.array(train_idx, dtype=int)
+    val_idx_arr = np.array(val_idx, dtype=int)
+    test_idx_arr = np.array(test_idx, dtype=int)
+    
+    # 6. Shuffle Them
+    np.random.shuffle(train_idx_arr)
+    np.random.shuffle(val_idx_arr)
+    np.random.shuffle(test_idx_arr)
+    
+    return train_idx_arr, val_idx_arr, test_idx_arr

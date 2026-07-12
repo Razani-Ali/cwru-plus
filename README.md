@@ -148,6 +148,46 @@ print(f"Source Domain (0-2 HP) Shape: {X_train.shape}")
 print(f"Target Domain (3 HP) Shape: {X_test.shape}")
 
 ```
+---
+## 🔬 Leakage-Free Stratified Data Splitting
+
+In rotating machinery fault diagnosis, splitting data windows randomly causes severe **Data Leakage**. Overlapping windows from the same `.mat` file end up in both training and testing sets, leading to artificially high accuracies (overfitting) that fail on unseen machines.
+
+The models will optimize for the specific temporal signature of that exact test run rather than learning generic fault features. For robust evaluation, we highly recommend setting `num_parts=1` and utilizing our **File-Level Stratified Splitting** to completely isolate unseen physical experiments.
+
+`cwru-plus` solves this by introducing a **Stratified Group Splitter**. It ensures that windows from the same physical file stay together (either 100% in Train, Val, or Test), while strictly maintaining the class distribution frequency across all splits.
+
+### Complete ML-Ready Demo (Fancy Indexing)
+
+```python
+import cwru
+
+# 1. Load samples along with their original File IDs
+(X, Y, file_ids), metadata = cwru.load(
+    npz_path="data/CWRU_48k.npz", 
+    window_size=2048, 
+    step_size=512
+)
+
+# 2. Generate perfect, leakage-free indices grouped by physical files
+(train_data), (val_data), (test_data) = cwru.stratified_file_split(
+    X=X,
+    y=Y, 
+    file_ids=file_ids, 
+    train_ratio=0.8, 
+    val_ratio=0.1, 
+    random_seed=42)
+
+# 3. Apply NumPy Fancy Indexing
+train_x, train_y = train_data
+val_x, val_y = val_data
+test_x, test_y = test_data
+
+```
+
+### ⚠️ A Warning on Temporal Splitting (`num_parts`) and Non-Stationarity
+
+Some frameworks attempt to avoid file-level leakage by splitting a single long signal into temporal segments over time (using the `num_parts` argument in module `cwru.load`). However, due to the **non-stationary nature** of real-world vibration signals (caused by slight motor load fluctuations, temperature shifts, and transient slips during the experiment), splitting a continuous signal across time still introduces severe distribution leakage between the Train and Validation sets. 
 
 ---
 ## 🎯 Built-in Few-Shot & Meta-Learning Sampler

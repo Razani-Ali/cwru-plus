@@ -13,7 +13,7 @@ from typing import Callable, Dict, Tuple, Union, List, Optional
 from .downloader import download_CWRU_files, local_download
 from .ingestion import CWRUIngestor
 from .filtering import DatasetFilter
-from .dataset import CWRUDatasetBuilder
+from .dataset import CWRUDatasetBuilder, generate_stratified_file_split
 from .fewshot_sampler import FewShotSampler
 
 __version__ = "0.1.0"
@@ -202,10 +202,11 @@ class CWRUPipeline:
 
         Returns:
             Tuple: A pair of structured tuples:
-                - (X, Y): 
+                - (X, Y, ID): 
                     X: Extracted windows with shape (Samples, Channels, Window_Size) if num_parts is None,
                        or (Num_Parts, Samples_per_Part, Channels, Window_Size) if num_parts is active.
                     Y: Target string labels matching the configuration strategy.
+                    ID: File Index Related to Extracted Windows, Useful for File Based Data Separation
                 - (Severities, HorsePowers, Locations):
                     Vectorized metadata tracking original structural records for each generated window.
         """
@@ -218,6 +219,52 @@ class CWRUPipeline:
             fault_category=fault_category,
             num_parts=num_parts
         )
+
+    @staticmethod
+    def stratified_file_split(
+        X: np.ndarray, 
+        y: np.ndarray, 
+        file_ids: np.ndarray, 
+        train_ratio: float = 0.75, 
+        val_ratio: float = 0.25, 
+        random_seed: int = 42
+    ) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """
+        A high-level wrapper that automates leakage-free, stratified data splitting 
+        and returns ready-to-use NumPy arrays via Fancy Indexing.
+
+        This function wraps `generate_stratified_file_split` to simplify the user pipeline.
+        It splits the dataset in a single call while ensuring that:
+        1. No physical file spans across different splits (Zero Data Leakage).
+        2. The target class distribution remains identical in Train, Val, and Test sets.
+
+        Args:
+            X (np.ndarray): The feature matrix/tensor containing signal windows, shape [N, window_size].
+            y (np.ndarray): The 1D target array containing class labels, shape [N].
+            file_ids (np.ndarray): The 1D array identifying the source file of each window, shape [N].
+            train_ratio (float): Percentage of physical files allocated to Training (default: 0.8).
+            val_ratio (float): Percentage of physical files allocated to Validation (default: 0.1).
+            random_seed (int): Control seed for shuffling reproducibility (default: 42).
+
+        Returns:
+            Tuple[Tuple, Tuple]: A nested tuple containing two main components:
+                1. Data Splits: (train_data, val_data, test_data) where each is a tuple of (X_split, y_split).
+                2. Indices Splits: (train_idx, val_idx, test_idx) containing the raw NumPy index arrays.
+        """
+        # 1. Calling the core stratified file-based index generator
+        train_idx, val_idx, test_idx = generate_stratified_file_split(
+            y=y,
+            file_ids=file_ids,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            random_seed=random_seed
+        )
+
+        train_d = (X[train_idx], y[train_idx])
+        val_d = (X[val_idx], y[val_idx])
+        test_d = (X[test_idx], y[test_idx])
+        
+        return (train_d, val_d, test_d), (train_idx, val_idx, test_idx)
 
     @staticmethod
     def build_few_shot_sampler(
