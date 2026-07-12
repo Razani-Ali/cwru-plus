@@ -259,7 +259,7 @@ class RecordStorage:
         S_out = np.repeat(self.S, counts)
         HP_out = np.repeat(self.HP, counts).astype(np.int32)
         Loc_out = np.repeat(self.Loc, counts).astype(np.int32)
-        File_idx_out = np.repeat(self.file_idx. counts).astype(np.int32)
+        File_idx_out = np.repeat(self.file_idx, counts).astype(np.int32)
         
         # Generate dynamic, formatted string labels
         Y_out = CWRULabelGenerator.generate(Y_base, S_out, Loc_out, fault_category)
