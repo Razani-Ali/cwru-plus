@@ -170,7 +170,7 @@ import cwru
 )
 
 # 2. Generate perfect, leakage-free indices grouped by physical files
-(train_data), (val_data), (test_data) = cwru.stratified_file_split(
+(tr_d, val_d, te_d), (tr_idx, _, _) = cwru.stratified_file_split(
     X=X,
     y=Y, 
     file_ids=file_ids, 
@@ -178,10 +178,13 @@ import cwru
     val_ratio=0.1, 
     random_seed=42)
 
-# 3. Apply NumPy Fancy Indexing
-train_x, train_y = train_data
-val_x, val_y = val_data
-test_x, test_y = test_data
+# 3. Extract Arrays From Tuple
+train_x, train_y = tr_d
+val_x, val_y = val_d
+test_x, test_y = te_d
+
+# 4. If You Need to Split Meta_Data too
+train_HP = metadata[1][tr_idx]
 
 ```
 
@@ -189,6 +192,19 @@ test_x, test_y = test_data
 
 Some frameworks attempt to avoid file-level leakage by splitting a single long signal into temporal segments over time (using the `num_parts` argument in module `cwru.load`). However, due to the **non-stationary nature** of real-world vibration signals (caused by slight motor load fluctuations, temperature shifts, and transient slips during the experiment), splitting a continuous signal across time still introduces severe distribution leakage between the Train and Validation sets. 
 
+### 🚨 Crucial Notice on CWRU/MAFAULDA Low-File Regime & Skewed Splits
+
+When using `Dataset.stratified_file_split()`, you might notice deviations in the horizontal split ratios (e.g., the `Normal` class dominating the Test set while dropped in Train). 
+
+**This is NOT a bug in the code; it is an inherent physical limitation of the CWRU dataset:**
+1. **Extreme Low-File Counts:** Most fault classes (e.g. 'IR007') contain only 4 physical `.mat` files in total.
+2. **Imbalancy:** The `Normal` baseline files contain significantly longer continuous signals (yielding thousand more windows) than the damaged bearing files.
+
+Since our algorithm strictly enforces **Zero Data Leakage** by keeping windows of the same file together, moving one massive `Normal` file to a small test partition creates a major statistical displacement. 
+
+#### How to handle this in your Research Paper:
+* **Avoid standard Accuracy:** Due to the unavoidable test set imbalance, always evaluate your neural networks using **Macro F1-Score** or **Balanced Accuracy**.
+* **Opt for a 2-way Split:** For perfectly proportional distributions, set `val_ratio=0.0` to activate the clean 2-way split (allocating 3 files to Train and 1 to Test per class).
 ---
 ## 🎯 Built-in Few-Shot & Meta-Learning Sampler
 
