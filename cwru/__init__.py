@@ -15,6 +15,7 @@ from .ingestion import CWRUIngestor
 from .filtering import DatasetFilter
 from .dataset import CWRUDatasetBuilder, generate_stratified_file_split
 from .fewshot_sampler import FewShotSampler
+from .transform import FeatureWorkspace
 
 __version__ = "0.1.0"
 
@@ -22,12 +23,15 @@ __version__ = "0.1.0"
 # Define a clean high-level interface (Facade Pattern)
 # --------------------------------------------------------------------
 
-class CWRUPipeline:
+class CWRUPipeline(FeatureWorkspace):
     """High-level API wrapping dataset operations for end-users.
     
     Acts as a unified facade for concurrently downloading raw data, parsing MAT files,
     parallel filtering, and lightning-fast temporal/sliding-window data construction.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
     
     @staticmethod
     def download(
