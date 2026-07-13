@@ -101,7 +101,7 @@ class FeatureWorkspace:
         os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
         
         # Compress and archive the mathematically intact features alongside standard trackers
-        np.savez_compressed(
+        np.savez(
             save_path,
             features=final_feature_tensor,
             labels=y,
@@ -113,7 +113,7 @@ class FeatureWorkspace:
         print(f"📊 Final Saved Feature Shape: {final_feature_tensor.shape}")
 
     @staticmethod
-    def load(npz_path: str) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], Any]:
+    def load_transformed(npz_path: str) -> Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], Any]:
         """Restores the pristine multi-dimensional dataset archive from disk."""
         if not os.path.exists(npz_path):
             raise FileNotFoundError(f"Feature archive missing at path: {npz_path}")
@@ -125,4 +125,11 @@ class FeatureWorkspace:
             metadata_raw = data['metadata']
             metadata = metadata_raw.item() if metadata_raw.ndim == 0 else metadata_raw
 
+        np.savez(
+            save_path,
+            features=final_feature_tensor,
+            labels=y,
+            file_ids=file_ids,
+            metadata=metadata
+        )
         return (features, labels, file_ids), metadata
