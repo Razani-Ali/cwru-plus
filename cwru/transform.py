@@ -9,12 +9,7 @@ to unify iteration loops while preserving the strict structural geometry upon st
 import os
 from typing import Callable, Tuple, Any
 import numpy as np
-
-try:
-    from tqdm import tqdm
-    HAS_TQDM = True
-except ImportError:
-    HAS_TQDM = False
+from tqdm import tqdm
 
 
 class FeatureWorkspace:
@@ -70,8 +65,7 @@ class FeatureWorkspace:
         
         # Setup the progress bar context
         iterator = range(total_iterations)
-        if HAS_TQDM:
-            iterator = tqdm(iterator, desc="Extracting Feature Space", unit="step")
+        iterator = tqdm(iterator, desc="Extracting Feature Space", unit="step")
             
         # Execute the extraction across the optimized sequential memory view
         for i in iterator:
@@ -100,7 +94,7 @@ class FeatureWorkspace:
         # Secure system directories
         os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
         
-        # Compress and archive the mathematically intact features alongside standard trackers
+        # Archive the mathematically intact features alongside standard trackers
         np.savez(
             save_path,
             features=final_feature_tensor,
@@ -125,11 +119,4 @@ class FeatureWorkspace:
             metadata_raw = data['metadata']
             metadata = metadata_raw.item() if metadata_raw.ndim == 0 else metadata_raw
 
-        np.savez(
-            save_path,
-            features=final_feature_tensor,
-            labels=y,
-            file_ids=file_ids,
-            metadata=metadata
-        )
         return (features, labels, file_ids), metadata
