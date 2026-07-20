@@ -5,7 +5,8 @@ from typing import Tuple, Dict, Optional
 class FewShotSampler:
     """
     A high-performance, strategic sampler designed for Few-Shot and Meta-Learning tasks.
-    Adapted for pre-windowed 3D tensors.
+    Works with arbitrary-rank NumPy arrays. The only assumption is that the first axis
+    indexes independent samples.
     
     It decouples the ML algorithm from underlying string labels by mapping requested 
     numerical class indices (e.g., 0, 1, 2) directly to their database string names,
@@ -18,7 +19,7 @@ class FewShotSampler:
         Initializes the Few-Shot Sampler with pre-windowed arrays.
 
         Args:
-            X_base (np.ndarray): Foundational 3D tensor of shape [Total_Windows, Channels, Length].
+            X_base (np.ndarray): Foundational tensor of shape [Total_Windows, ...].
             Y_base (np.ndarray): Master 1D array of original string labels.
             numeric_to_string (Dict[int, str]): Map dictionary translating integers to strings.
                                                 e.g., {0: 'normal', 1: 'imbalance', 2: 'misalignment'}
